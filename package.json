@@ -1,0 +1,55 @@
+{
+  "name": "iqra-finance",
+  "productName": "IQRA Finance",
+  "version": "1.0.0",
+  "description": "School Finance & Management System for IQRA Public School and College",
+  "author": "IQRA Public School and College",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/renderer/input.css -o ./dist/styles.css --minify",
+    "build:js": "esbuild src/renderer/app.jsx --bundle --outfile=dist/app.js --minify --loader:.js=jsx",
+    "build:html": "node -e \"require('fs').copyFileSync('src/renderer/index.html','dist/index.html')\"",
+    "build": "node -e \"require('fs').mkdirSync('dist',{recursive:true})\" && npm run build:css && npm run build:js && npm run build:html",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.23.1",
+    "tailwindcss": "^3.4.10"
+  },
+  "build": {
+    "appId": "com.iqrapublicschool.finance",
+    "productName": "IQRA Finance",
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "IQRA Finance"
+    }
+  }
+}
