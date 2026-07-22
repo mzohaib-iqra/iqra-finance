@@ -46,6 +46,9 @@ const DEFAULT_DATA = {
     incomeCategories: DEFAULT_INCOME_CATEGORIES.slice(),
     expenseCategories: DEFAULT_EXPENSE_CATEGORIES.slice(),
     paymentMethods: DEFAULT_PAYMENT_METHODS.slice(),
+    darkMode: false,
+    docPrefix: "DOC",
+    nextDocNo: 4001,
   },
   students: [],
   income: [],
@@ -53,12 +56,55 @@ const DEFAULT_DATA = {
   employees: [],
   salaryPayments: [],
   vehicles: [],
+  documents: [],
+  fines: [],
+  users: [],
 };
 
 function freshData() { return JSON.parse(JSON.stringify(DEFAULT_DATA)); }
 
 const EMPLOYEE_ROLES = ["Teacher","Staff","Admin Officer","Other"];
 const VEHICLE_TYPES = ["Van","Bus","Coaster","Rickshaw","Other"];
+const DOCUMENT_TYPES = ["Board Registration Certificate","Board Exam Result","Character Certificate","Migration Certificate","Duplicate Certificate","Result Card","Other"];
+const DOCUMENT_FEE_CATEGORY = {
+  "Board Registration Certificate": "Board Registration Fee",
+  "Board Exam Result": "Board Exam Fee",
+  "Character Certificate": "Character Certificate Fee",
+  "Migration Certificate": "Migration Fee",
+  "Duplicate Certificate": "Duplicate Certificate Fee",
+  "Result Card": "Documents Fee",
+  "Other": "Documents Fee",
+};
+const FINE_TYPES = ["Late Fee Fine","Discipline Fine","Library Fine","Custom Fine"];
+const USER_ROLES = ["Admin","Principal","Accountant","Data Entry Operator","Read-only User"];
+
+function getCapabilities(role) {
+  const isAdmin = role === 'Admin';
+  const isPrincipal = role === 'Principal';
+  const isAccountant = role === 'Accountant';
+  const isDataEntry = role === 'Data Entry Operator';
+  return {
+    canEdit: isAdmin || isPrincipal || isAccountant || isDataEntry,
+    canDelete: isAdmin || isPrincipal || isAccountant,
+    canAccessSettings: isAdmin || isPrincipal,
+    canManageUsers: isAdmin,
+  };
+}
+
+/* Simple local password hashing using the Web Crypto API (SHA-256 + per-user salt).
+   This is meant to keep casual users out of a shared school PC, not to withstand
+   a determined offline attack on the data file — that trade-off is reasonable for
+   a single-computer local app with no server component. */
+function randomSalt() {
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function hashPassword(password, salt) {
+  const enc = new TextEncoder();
+  const buf = await crypto.subtle.digest('SHA-256', enc.encode(salt + ':' + password));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 /* =========================================================================
    UTILITIES
@@ -195,6 +241,11 @@ function Icon({ name, className }) {
     case 'refresh': return <svg viewBox="0 0 24 24" className={cls} {...common}><path d="M4 12a8 8 0 0 1 14-5.3L21 9M20 12a8 8 0 0 1-14 5.3L3 15M21 4v5h-5M3 20v-5h5"/></svg>;
     case 'user': return <svg viewBox="0 0 24 24" className={cls} {...common}><circle cx="12" cy="8" r="3.2"/><path d="M5 21c0-4 3-6.5 7-6.5s7 2.5 7 6.5"/></svg>;
     case 'alert': return <svg viewBox="0 0 24 24" className={cls} {...common}><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17h0"/></svg>;
+    case 'moon': return <svg viewBox="0 0 24 24" className={cls} {...common}><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/></svg>;
+    case 'sun': return <svg viewBox="0 0 24 24" className={cls} {...common}><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>;
+    case 'logout': return <svg viewBox="0 0 24 24" className={cls} {...common}><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 8l-4 4 4 4M6 12h12"/></svg>;
+    case 'document': return <svg viewBox="0 0 24 24" className={cls} {...common}><path d="M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v4h4M9 12h6M9 16h6M9 8h2"/></svg>;
+    case 'lock': return <svg viewBox="0 0 24 24" className={cls} {...common}><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>;
     default: return null;
   }
 }
@@ -385,11 +436,14 @@ const NAV_ITEMS = [
   { key:'expenses', label:'Expenses', icon:'expense' },
   { key:'salary', label:'Salary', icon:'payroll' },
   { key:'transport', label:'Transport', icon:'bus' },
+  { key:'documents', label:'Documents', icon:'document' },
+  { key:'fines', label:'Fines', icon:'alert' },
   { key:'reports', label:'Reports', icon:'reports' },
   { key:'settings', label:'Settings', icon:'settings' },
 ];
 
-function Sidebar({ tab, setTab, settings, mobileOpen, setMobileOpen }) {
+function Sidebar({ tab, setTab, settings, mobileOpen, setMobileOpen, caps, currentUser, onLogout }) {
+  const visibleItems = NAV_ITEMS.filter(item => item.key !== 'settings' || caps.canAccessSettings);
   return (
     <>
       {mobileOpen && <div className="fixed inset-0 bg-black/40 z-30 lg:hidden" onClick={()=>setMobileOpen(false)}></div>}
@@ -401,16 +455,26 @@ function Sidebar({ tab, setTab, settings, mobileOpen, setMobileOpen }) {
             <p className="text-[11px] text-white/50 truncate">{settings.tagline}</p>
           </div>
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          {NAV_ITEMS.map(item => (
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+          {visibleItems.map(item => (
             <button key={item.key} onClick={()=>{ setTab(item.key); setMobileOpen(false); }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition ${tab===item.key ? 'bg-brand-600 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}>
-              <Icon name={item.icon} className="w-4.5 h-4.5" />
+              <Icon name={item.icon} className="w-[18px] h-[18px]" />
               {item.label}
             </button>
           ))}
         </nav>
-        <div className="px-5 py-4 border-t border-white/10 text-[11px] text-white/35">
+        {currentUser && (
+          <div className="px-4 py-3 border-t border-white/10 flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center shrink-0"><Icon name="user" className="w-4 h-4 text-white/70" /></div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium truncate">{currentUser.fullName || currentUser.username}</p>
+              <p className="text-[10px] text-white/40 truncate">{currentUser.role}</p>
+            </div>
+            <button title="Log out" onClick={onLogout} className="p-1.5 rounded-lg text-white/40 hover:bg-white/10 hover:text-white"><Icon name="logout" className="w-4 h-4"/></button>
+          </div>
+        )}
+        <div className="px-5 py-3 border-t border-white/10 text-[11px] text-white/35">
           Session {settings.session}<br/>Data stored locally on this computer
         </div>
       </aside>
@@ -418,7 +482,7 @@ function Sidebar({ tab, setTab, settings, mobileOpen, setMobileOpen }) {
   );
 }
 
-function Topbar({ setMobileOpen, title, subtitle }) {
+function Topbar({ setMobileOpen, title, subtitle, darkMode, onToggleDark }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => { const t = setInterval(()=>setNow(new Date()), 60000); return ()=>clearInterval(t); }, []);
   return (
@@ -432,9 +496,15 @@ function Topbar({ setMobileOpen, title, subtitle }) {
           {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
         </div>
       </div>
-      <div className="text-right hidden sm:block">
-        <p className="text-sm font-medium text-slate-600">{now.toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long', year:'numeric'})}</p>
-        <p className="text-xs text-slate-400">{now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</p>
+      <div className="flex items-center gap-4">
+        <button title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} onClick={onToggleDark}
+          className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 transition">
+          <Icon name={darkMode ? 'sun' : 'moon'} className="w-[18px] h-[18px]" />
+        </button>
+        <div className="text-right hidden sm:block">
+          <p className="text-sm font-medium text-slate-600">{now.toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long', year:'numeric'})}</p>
+          <p className="text-xs text-slate-400">{now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</p>
+        </div>
       </div>
     </header>
   );
@@ -455,6 +525,7 @@ function Dashboard({ data, setTab }) {
   const activeStudents = data.students.filter(s=>s.status==='Active');
   const transportStudents = activeStudents.filter(s=>s.transport);
   const pendingFeeTotal = activeStudents.reduce((s,st)=>s+studentPendingFee(st, data.income),0);
+  const pendingFinesTotal = data.fines.filter(f=>f.status==='Pending').reduce((s,f)=>s+Number(f.amount||0),0);
 
   const months = getLast6MonthKeys();
   const incomeSeries = months.map(m=>totalsForMonth(data,m).income);
@@ -483,6 +554,7 @@ function Dashboard({ data, setTab }) {
         <StatCard label="Monthly Profit" value={formatPKR(monthTotals.profit)} icon="reports" tint={monthTotals.profit>=0?'emerald':'rose'} />
         <StatCard label="Yearly Profit" value={formatPKR(yearTotals.profit)} icon="reports" tint={yearTotals.profit>=0?'emerald':'rose'} />
         <StatCard label="Pending Fees" value={formatPKR(pendingFeeTotal)} icon="alert" tint="amber" sub="Across active students" />
+        <StatCard label="Pending Fines" value={formatPKR(pendingFinesTotal)} icon="alert" tint="amber" sub="Unpaid fines" />
         <StatCard label="Total Students" value={activeStudents.length} icon="students" tint="slate" />
         <StatCard label="Transport Students" value={transportStudents.length} icon="bus" tint="slate" />
         <StatCard label="Total Records" value={data.income.length + data.expenses.length} icon="dashboard" tint="slate" sub="Income + expense entries" />
@@ -578,7 +650,7 @@ function StudentForm({ initial, onSave, onCancel }) {
   );
 }
 
-function StudentProfile({ student, income, onClose, onRecordPayment }) {
+function StudentProfile({ student, income, onClose, onRecordPayment, caps }) {
   const history = income.filter(i=>i.studentId===student.id).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const pending = studentPendingFee(student, income);
   const paid = history.reduce((s,i)=>s+Number(i.amount||0),0);
@@ -602,7 +674,7 @@ function StudentProfile({ student, income, onClose, onRecordPayment }) {
       </div>
       <div className="flex items-center justify-between mb-2">
         <h4 className="font-display font-semibold text-sm text-slate-700">Fee & Payment History</h4>
-        <Button onClick={()=>onRecordPayment(student)} className="text-xs py-1.5"><Icon name="plus" className="w-3.5 h-3.5"/>Record Payment</Button>
+        {caps.canEdit && <Button onClick={()=>onRecordPayment(student)} className="text-xs py-1.5"><Icon name="plus" className="w-3.5 h-3.5"/>Record Payment</Button>}
       </div>
       <div className="border border-slate-100 rounded-xl overflow-hidden">
         <table className="w-full text-sm">
@@ -621,7 +693,7 @@ function StudentProfile({ student, income, onClose, onRecordPayment }) {
   );
 }
 
-function StudentsModule({ data, addStudent, updateStudent, deleteStudent, openIncomeFormFor }) {
+function StudentsModule({ data, addStudent, updateStudent, deleteStudent, openIncomeFormFor, caps }) {
   const [q, setQ] = useState('');
   const [classFilter, setClassFilter] = useState('All');
   const [sectionFilter, setSectionFilter] = useState('All');
@@ -648,7 +720,7 @@ function StudentsModule({ data, addStudent, updateStudent, deleteStudent, openIn
           <select className={inputCls + " w-auto"} value={sectionFilter} onChange={e=>setSectionFilter(e.target.value)}><option>All</option>{SECTIONS.map(s=><option key={s}>{s}</option>)}</select>
           <select className={inputCls + " w-auto"} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>All</option><option>Active</option><option>Left</option></select>
         </div>
-        <Button onClick={()=>{ setEditing(null); setFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Student</Button>
+        {caps.canEdit && <Button onClick={()=>{ setEditing(null); setFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Student</Button>}
       </div>
 
       <Card className="overflow-hidden">
@@ -679,8 +751,8 @@ function StudentsModule({ data, addStudent, updateStudent, deleteStudent, openIn
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1">
                         <button title="View" onClick={()=>setProfileOf(s)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="eye" className="w-4 h-4"/></button>
-                        <button title="Edit" onClick={()=>{ setEditing(s); setFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>
-                        <button title="Delete" onClick={()=>setToDelete(s)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>
+                        {caps.canEdit && <button title="Edit" onClick={()=>{ setEditing(s); setFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>}
+                        {caps.canDelete && <button title="Delete" onClick={()=>setToDelete(s)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>}
                       </div>
                     </td>
                   </tr>
@@ -696,7 +768,7 @@ function StudentsModule({ data, addStudent, updateStudent, deleteStudent, openIn
           <StudentForm initial={editing} onCancel={()=>setFormOpen(false)} onSave={(f)=>{ editing ? updateStudent(editing.id, f) : addStudent(f); setFormOpen(false); }} />
         </Modal>
       )}
-      {profileOf && <StudentProfile student={profileOf} income={data.income} onClose={()=>setProfileOf(null)} onRecordPayment={(s)=>{ setProfileOf(null); openIncomeFormFor(s); }} />}
+      {profileOf && <StudentProfile student={profileOf} income={data.income} onClose={()=>setProfileOf(null)} onRecordPayment={(s)=>{ setProfileOf(null); openIncomeFormFor(s); }} caps={caps} />}
       {toDelete && <ConfirmDialog text={`Delete student "${toDelete.name}"? This cannot be undone.`} onCancel={()=>setToDelete(null)} onConfirm={()=>{ deleteStudent(toDelete.id); setToDelete(null); }} />}
     </div>
   );
@@ -771,7 +843,7 @@ function ReceiptView({ entry, settings, student }) {
   );
 }
 
-function IncomeModule({ data, addIncome, updateIncome, deleteIncome, prefillFor, clearPrefill }) {
+function IncomeModule({ data, addIncome, updateIncome, deleteIncome, prefillFor, clearPrefill, caps }) {
   const [q, setQ] = useState('');
   const [catFilter, setCatFilter] = useState('All');
   const [formOpen, setFormOpen] = useState(false);
@@ -804,7 +876,7 @@ function IncomeModule({ data, addIncome, updateIncome, deleteIncome, prefillFor,
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-slate-500">Total: <span className="font-semibold text-emerald-600">{formatPKR(total)}</span></span>
-          <Button onClick={()=>{ setEditing(null); setFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Income</Button>
+          {caps.canEdit && <Button onClick={()=>{ setEditing(null); setFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Income</Button>}
         </div>
       </div>
 
@@ -829,8 +901,8 @@ function IncomeModule({ data, addIncome, updateIncome, deleteIncome, prefillFor,
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1">
                         <button title="Print receipt" onClick={()=>setPrinting(i)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="print" className="w-4 h-4"/></button>
-                        <button title="Edit" onClick={()=>{ setEditing(i); setFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>
-                        <button title="Delete" onClick={()=>setToDelete(i)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>
+                        {caps.canEdit && <button title="Edit" onClick={()=>{ setEditing(i); setFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>}
+                        {caps.canDelete && <button title="Delete" onClick={()=>setToDelete(i)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>}
                       </div>
                     </td>
                   </tr>
@@ -930,7 +1002,7 @@ function VoucherView({ entry, settings }) {
   );
 }
 
-function ExpensesModule({ data, addExpense, updateExpense, deleteExpense }) {
+function ExpensesModule({ data, addExpense, updateExpense, deleteExpense, caps }) {
   const [q, setQ] = useState('');
   const [catFilter, setCatFilter] = useState('All');
   const [formOpen, setFormOpen] = useState(false);
@@ -955,7 +1027,7 @@ function ExpensesModule({ data, addExpense, updateExpense, deleteExpense }) {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-slate-500">Total: <span className="font-semibold text-rose-600">{formatPKR(total)}</span></span>
-          <Button onClick={()=>{ setEditing(null); setFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Expense</Button>
+          {caps.canEdit && <Button onClick={()=>{ setEditing(null); setFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Expense</Button>}
         </div>
       </div>
 
@@ -978,8 +1050,8 @@ function ExpensesModule({ data, addExpense, updateExpense, deleteExpense }) {
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
                       <button title="Print voucher" onClick={()=>setPrinting(e)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="print" className="w-4 h-4"/></button>
-                      <button title="Edit" onClick={()=>{ setEditing(e); setFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>
-                      <button title="Delete" onClick={()=>setToDelete(e)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>
+                      {caps.canEdit && <button title="Edit" onClick={()=>{ setEditing(e); setFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>}
+                      {caps.canDelete && <button title="Delete" onClick={()=>setToDelete(e)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>}
                     </div>
                   </td>
                 </tr>
@@ -1199,7 +1271,7 @@ function CategoryEditor({ label, list, onChange }) {
   );
 }
 
-function SettingsModule({ data, updateSettings, importData, resetData }) {
+function SettingsModule({ data, updateSettings, importData, resetData, caps, currentUser, onAddUser, onUpdateUser, onDeleteUser }) {
   const s = data.settings;
   const set = (k,v) => updateSettings({ [k]: v });
   const [confirmReset, setConfirmReset] = useState(false);
@@ -1272,6 +1344,18 @@ function SettingsModule({ data, updateSettings, importData, resetData }) {
       </Card>
 
       <Card className="p-5">
+        <h3 className="font-display font-semibold text-sm text-slate-700 mb-4">Appearance</h3>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" checked={!!s.darkMode} onChange={e=>set('darkMode', e.target.checked)} className="w-4 h-4 accent-brand-600" />
+          <span className="text-sm text-slate-600">Use dark mode</span>
+        </label>
+      </Card>
+
+      {caps.canManageUsers && (
+        <UsersSection users={data.users} currentUser={currentUser} onAddUser={onAddUser} onUpdateUser={onUpdateUser} onDeleteUser={onDeleteUser} />
+      )}
+
+      <Card className="p-5">
         <h3 className="font-display font-semibold text-sm text-slate-700 mb-2">Backup & Restore</h3>
         <p className="text-xs text-slate-400 mb-4">Your data is stored only on this computer, in a local data file. Export a backup regularly and keep a copy somewhere safe (a USB drive or cloud folder) — uninstalling the app or a disk failure will erase everything unless you have a backup.</p>
         <div className="flex flex-wrap gap-2">
@@ -1284,6 +1368,91 @@ function SettingsModule({ data, updateSettings, importData, resetData }) {
 
       {confirmReset && <ConfirmDialog text="This will permanently erase all students, income, expense, salary, and transport records on this computer. Export a backup first if you're not sure. Continue?" onCancel={()=>setConfirmReset(false)} onConfirm={()=>{ resetData(); setConfirmReset(false); }} />}
     </div>
+  );
+}
+
+/* =========================================================================
+   USERS & PERMISSIONS (embedded in Settings)
+   ========================================================================= */
+function UserForm({ initial, onSave, onCancel }) {
+  const [f, setF] = useState(initial ? { ...initial, password:'', confirm:'' } : { username:'', fullName:'', role: USER_ROLES[3], status:'Active', password:'', confirm:'' });
+  const [error, setError] = useState('');
+  const set = (k,v) => setF(prev=>({...prev,[k]:v}));
+  const isNew = !initial;
+  const submit = (e) => {
+    e.preventDefault();
+    setError('');
+    if (!f.username.trim()) { setError('Username is required.'); return; }
+    if (isNew && !f.password) { setError('Password is required for a new user.'); return; }
+    if (f.password && f.password !== f.confirm) { setError('Passwords do not match.'); return; }
+    if (f.password && f.password.length < 6) { setError('Password should be at least 6 characters.'); return; }
+    onSave(f);
+  };
+  return (
+    <form onSubmit={submit}>
+      <div className="grid sm:grid-cols-2 gap-x-4">
+        <Field label="Username" required><input className={inputCls} value={f.username} onChange={e=>set('username',e.target.value)} disabled={!isNew} required/></Field>
+        <Field label="Full Name"><input className={inputCls} value={f.fullName} onChange={e=>set('fullName',e.target.value)} /></Field>
+        <Field label="Role"><select className={inputCls} value={f.role} onChange={e=>set('role',e.target.value)}>{USER_ROLES.map(r=><option key={r}>{r}</option>)}</select></Field>
+        <Field label="Status"><select className={inputCls} value={f.status} onChange={e=>set('status',e.target.value)}><option>Active</option><option>Disabled</option></select></Field>
+        <Field label={isNew ? "Password" : "New Password (leave blank to keep current)"}><input type="password" className={inputCls} value={f.password} onChange={e=>set('password',e.target.value)} /></Field>
+        <Field label="Confirm Password"><input type="password" className={inputCls} value={f.confirm} onChange={e=>set('confirm',e.target.value)} /></Field>
+      </div>
+      <p className="text-xs text-slate-400 -mt-2 mb-3">
+        Admin/Principal: full access. Accountant: add/edit/delete financial records. Data Entry Operator: add/edit only. Read-only User: view only. Only Admin can manage users.
+      </p>
+      {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
+      <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 mt-2">
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button type="submit">{isNew ? 'Create User' : 'Save Changes'}</Button>
+      </div>
+    </form>
+  );
+}
+
+function UsersSection({ users, currentUser, onAddUser, onUpdateUser, onDeleteUser }) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [toDelete, setToDelete] = useState(null);
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="font-display font-semibold text-sm text-slate-700">Users & Permissions</h3>
+          <p className="text-xs text-slate-400 mt-0.5">Control who can log in and what they can do.</p>
+        </div>
+        <Button onClick={()=>{ setEditing(null); setFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add User</Button>
+      </div>
+      <div className="border border-slate-100 rounded-xl overflow-hidden overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-500 text-xs uppercase"><tr><th className="text-left px-3 py-2">Username</th><th className="text-left px-3 py-2">Full Name</th><th className="text-left px-3 py-2">Role</th><th className="text-left px-3 py-2">Status</th><th className="text-right px-3 py-2">Actions</th></tr></thead>
+          <tbody className="divide-y divide-slate-50">
+            {users.length===0 && <tr><td colSpan="5" className="text-center py-6 text-slate-400">No users yet</td></tr>}
+            {users.map(u=>(
+              <tr key={u.id}>
+                <td className="px-3 py-2 font-medium">{u.username}{currentUser && u.id===currentUser.id && <span className="text-slate-400"> (you)</span>}</td>
+                <td className="px-3 py-2 text-slate-600">{u.fullName||'-'}</td>
+                <td className="px-3 py-2 text-slate-600">{u.role}</td>
+                <td className="px-3 py-2"><Badge tint={u.status==='Active'?'emerald':'slate'}>{u.status}</Badge></td>
+                <td className="px-3 py-2">
+                  <div className="flex justify-end gap-1">
+                    <button title="Edit" onClick={()=>{ setEditing(u); setFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>
+                    {(!currentUser || u.id !== currentUser.id) && <button title="Delete" onClick={()=>setToDelete(u)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {formOpen && (
+        <Modal title={editing ? 'Edit User' : 'Add User'} onClose={()=>setFormOpen(false)} wide>
+          <UserForm initial={editing} onCancel={()=>setFormOpen(false)} onSave={(f)=>{ editing ? onUpdateUser(editing, f) : onAddUser(f); setFormOpen(false); }} />
+        </Modal>
+      )}
+      {toDelete && <ConfirmDialog text={`Remove user "${toDelete.username}"? They will no longer be able to log in.`} onCancel={()=>setToDelete(null)} onConfirm={()=>{ onDeleteUser(toDelete); setToDelete(null); }} />}
+    </Card>
   );
 }
 
@@ -1375,7 +1544,7 @@ function SalarySlipView({ payment, employee, settings }) {
   );
 }
 
-function SalaryModule({ data, addEmployee, updateEmployee, deleteEmployee, paySalary, deleteSalaryPayment }) {
+function SalaryModule({ data, addEmployee, updateEmployee, deleteEmployee, paySalary, deleteSalaryPayment, caps }) {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('Active');
   const [empFormOpen, setEmpFormOpen] = useState(false);
@@ -1409,7 +1578,7 @@ function SalaryModule({ data, addEmployee, updateEmployee, deleteEmployee, paySa
           <div className="w-56"><SearchBox value={q} onChange={setQ} placeholder="Search employee, role, phone..." /></div>
           <select className={inputCls + " w-auto"} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>All</option><option>Active</option><option>Left</option></select>
         </div>
-        <Button onClick={()=>{ setEditingEmp(null); setEmpFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Employee</Button>
+        {caps.canEdit && <Button onClick={()=>{ setEditingEmp(null); setEmpFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Employee</Button>}
       </div>
 
       <Card className="overflow-hidden">
@@ -1429,9 +1598,9 @@ function SalaryModule({ data, addEmployee, updateEmployee, deleteEmployee, paySa
                   <td className="px-4 py-3"><Badge tint={e.status==='Active'?'emerald':'slate'}>{e.status}</Badge></td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      <Button className="text-xs py-1 px-2" onClick={()=>setPayingFor(e)}><Icon name="income" className="w-3.5 h-3.5"/>Pay</Button>
-                      <button title="Edit" onClick={()=>{ setEditingEmp(e); setEmpFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>
-                      <button title="Delete" onClick={()=>setToDeleteEmp(e)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>
+                      {caps.canEdit && <Button className="text-xs py-1 px-2" onClick={()=>setPayingFor(e)}><Icon name="income" className="w-3.5 h-3.5"/>Pay</Button>}
+                      {caps.canEdit && <button title="Edit" onClick={()=>{ setEditingEmp(e); setEmpFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>}
+                      {caps.canDelete && <button title="Delete" onClick={()=>setToDeleteEmp(e)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>}
                     </div>
                   </td>
                 </tr>
@@ -1460,7 +1629,7 @@ function SalaryModule({ data, addEmployee, updateEmployee, deleteEmployee, paySa
                     <td className="px-3 py-2">
                       <div className="flex justify-end gap-1">
                         <button title="Print slip" onClick={()=>setPrintingSlip(p)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="print" className="w-4 h-4"/></button>
-                        <button title="Delete" onClick={()=>setToDeletePayment(p)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>
+                        {caps.canDelete && <button title="Delete" onClick={()=>setToDeletePayment(p)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>}
                       </div>
                     </td>
                   </tr>
@@ -1522,7 +1691,7 @@ function VehicleForm({ initial, onSave, onCancel }) {
   );
 }
 
-function TransportModule({ data, addVehicle, updateVehicle, deleteVehicle }) {
+function TransportModule({ data, addVehicle, updateVehicle, deleteVehicle, caps }) {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [toDelete, setToDelete] = useState(null);
@@ -1542,7 +1711,7 @@ function TransportModule({ data, addVehicle, updateVehicle, deleteVehicle }) {
       </div>
 
       <div className="flex justify-end">
-        <Button onClick={()=>{ setEditing(null); setFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Vehicle</Button>
+        {caps.canEdit && <Button onClick={()=>{ setEditing(null); setFormOpen(true); }}><Icon name="plus" className="w-4 h-4"/>Add Vehicle</Button>}
       </div>
 
       <Card className="overflow-hidden">
@@ -1564,8 +1733,8 @@ function TransportModule({ data, addVehicle, updateVehicle, deleteVehicle }) {
                   <td className="px-4 py-3"><Badge tint={v.status==='Active'?'emerald':'slate'}>{v.status}</Badge></td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      <button title="Edit" onClick={()=>{ setEditing(v); setFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>
-                      <button title="Delete" onClick={()=>setToDelete(v)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>
+                      {caps.canEdit && <button title="Edit" onClick={()=>{ setEditing(v); setFormOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="edit" className="w-4 h-4"/></button>}
+                      {caps.canDelete && <button title="Delete" onClick={()=>setToDelete(v)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>}
                     </div>
                   </td>
                 </tr>
@@ -1590,6 +1759,227 @@ function TransportModule({ data, addVehicle, updateVehicle, deleteVehicle }) {
 }
 
 /* =========================================================================
+   DOCUMENTS MODULE
+   ========================================================================= */
+function DocumentForm({ students, onSave, onCancel }) {
+  const [f, setF] = useState({ studentId:'', type: DOCUMENT_TYPES[0], issueDate: todayStr(), feeCharged:'', remarks:'' });
+  const set = (k,v) => setF(prev=>({...prev,[k]:v}));
+  const submit = (e) => { e.preventDefault(); if(!f.studentId) return; onSave(f); };
+  return (
+    <form onSubmit={submit}>
+      <div className="grid sm:grid-cols-2 gap-x-4">
+        <Field label="Student" required>
+          <select className={inputCls} value={f.studentId} onChange={e=>set('studentId',e.target.value)} required>
+            <option value="">Select student...</option>
+            {students.map(s=><option key={s.id} value={s.id}>{s.name} ({s.admissionNo})</option>)}
+          </select>
+        </Field>
+        <Field label="Document Type"><select className={inputCls} value={f.type} onChange={e=>set('type',e.target.value)}>{DOCUMENT_TYPES.map(t=><option key={t}>{t}</option>)}</select></Field>
+        <Field label="Issue Date"><input type="date" className={inputCls} value={f.issueDate} onChange={e=>set('issueDate',e.target.value)} /></Field>
+        <Field label="Fee Charged (Rs, optional)"><input type="number" min="0" className={inputCls} value={f.feeCharged} onChange={e=>set('feeCharged',e.target.value)} /></Field>
+        <div className="sm:col-span-2"><Field label="Remarks"><textarea className={inputCls} rows="2" value={f.remarks} onChange={e=>set('remarks',e.target.value)} /></Field></div>
+      </div>
+      <p className="text-xs text-slate-400 -mt-2 mb-3">If a fee is charged, a matching income receipt is created automatically.</p>
+      <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 mt-2">
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button type="submit">Issue Document</Button>
+      </div>
+    </form>
+  );
+}
+
+function DocumentSlipView({ doc, student, settings }) {
+  return (
+    <div id="print-section" className="text-sm">
+      <div className="flex items-center gap-3 border-b border-slate-200 pb-3 mb-3">
+        {settings.logo && <img src={settings.logo} className="w-12 h-12 rounded object-cover" />}
+        <div><p className="font-display font-bold text-base">{settings.schoolName}</p><p className="text-xs text-slate-500">{settings.address}</p></div>
+      </div>
+      <div className="flex justify-between items-center mb-3">
+        <h3 className="font-display font-semibold">Document Issue Slip</h3>
+        <p className="text-slate-500">No: <span className="font-semibold text-ink">{doc.docNo}</span></p>
+      </div>
+      <div className="grid grid-cols-2 gap-y-1.5 mb-3">
+        <p className="text-slate-500">Student</p><p className="text-right font-medium">{student ? `${student.name} (Adm# ${student.admissionNo})` : '-'}</p>
+        <p className="text-slate-500">Document Type</p><p className="text-right font-medium">{doc.type}</p>
+        <p className="text-slate-500">Issue Date</p><p className="text-right font-medium">{formatDate(doc.issueDate)}</p>
+        {doc.feeCharged > 0 && <><p className="text-slate-500">Fee Charged</p><p className="text-right font-medium">{formatPKR(doc.feeCharged)}</p></>}
+      </div>
+      {doc.remarks && <p className="text-slate-500 text-xs mb-3">Remarks: {doc.remarks}</p>}
+      <p className="text-[11px] text-slate-400 mt-6">This is a computer-generated document issue record, not the certificate itself.</p>
+    </div>
+  );
+}
+
+function DocumentsModule({ data, issueDocument, deleteDocument, caps }) {
+  const [q, setQ] = useState('');
+  const [typeFilter, setTypeFilter] = useState('All');
+  const [formOpen, setFormOpen] = useState(false);
+  const [printing, setPrinting] = useState(null);
+  const [toDelete, setToDelete] = useState(null);
+
+  const filtered = data.documents.filter(d => {
+    if (typeFilter!=='All' && d.type!==typeFilter) return false;
+    if (q) {
+      const student = data.students.find(s=>s.id===d.studentId);
+      if (!(`${d.docNo} ${d.type} ${student?student.name:''}`.toLowerCase().includes(q.toLowerCase()))) return false;
+    }
+    return true;
+  }).sort((a,b)=>(b.issueDate||'').localeCompare(a.issueDate||''));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3 justify-between">
+        <div className="flex flex-wrap gap-2 flex-1 min-w-[240px]">
+          <div className="w-56"><SearchBox value={q} onChange={setQ} placeholder="Search doc#, type, student..." /></div>
+          <select className={inputCls + " w-auto"} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}><option>All</option>{DOCUMENT_TYPES.map(t=><option key={t}>{t}</option>)}</select>
+        </div>
+        {caps.canEdit && <Button onClick={()=>setFormOpen(true)}><Icon name="plus" className="w-4 h-4"/>Issue Document</Button>}
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+              <tr><th className="text-left px-4 py-3">Doc#</th><th className="text-left px-4 py-3">Student</th><th className="text-left px-4 py-3">Type</th><th className="text-left px-4 py-3">Issue Date</th><th className="text-right px-4 py-3">Fee</th><th className="text-right px-4 py-3">Actions</th></tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {filtered.length===0 && <tr><td colSpan="6"><EmptyState icon="document" title="No documents issued yet" sub="Track certificates, result cards, and other paid documents here." /></td></tr>}
+              {filtered.map(d=>{
+                const student = data.students.find(s=>s.id===d.studentId);
+                return (
+                  <tr key={d.id} className="hover:bg-slate-50/60">
+                    <td className="px-4 py-3 text-slate-500">{d.docNo}</td>
+                    <td className="px-4 py-3 font-medium text-slate-700">{student ? student.name : '(removed)'}</td>
+                    <td className="px-4 py-3 text-slate-600">{d.type}</td>
+                    <td className="px-4 py-3 text-slate-500">{formatDate(d.issueDate)}</td>
+                    <td className="px-4 py-3 text-right font-medium">{d.feeCharged > 0 ? formatPKR(d.feeCharged) : <span className="text-slate-400">—</span>}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-1">
+                        <button title="Print slip" onClick={()=>setPrinting(d)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Icon name="print" className="w-4 h-4"/></button>
+                        {caps.canDelete && <button title="Delete" onClick={()=>setToDelete(d)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {formOpen && (
+        <Modal title="Issue Document" onClose={()=>setFormOpen(false)} wide>
+          <DocumentForm students={data.students.filter(s=>s.status==='Active')} onCancel={()=>setFormOpen(false)} onSave={(f)=>{ issueDocument(f); setFormOpen(false); }} />
+        </Modal>
+      )}
+      {printing && (
+        <Modal title="Document Issue Slip" onClose={()=>setPrinting(null)}>
+          <DocumentSlipView doc={printing} student={data.students.find(s=>s.id===printing.studentId)} settings={data.settings} />
+          <div className="flex justify-end gap-2 mt-4 no-print">
+            <Button variant="secondary" onClick={()=>setPrinting(null)}>Close</Button>
+            <Button onClick={()=>window.print()}><Icon name="print" className="w-4 h-4"/>Print</Button>
+          </div>
+        </Modal>
+      )}
+      {toDelete && <ConfirmDialog text={`Delete this document record (${toDelete.docNo})? This does not affect any linked income entry.`} onCancel={()=>setToDelete(null)} onConfirm={()=>{ deleteDocument(toDelete.id); setToDelete(null); }} />}
+    </div>
+  );
+}
+
+/* =========================================================================
+   FINE MANAGEMENT MODULE
+   ========================================================================= */
+function FineForm({ students, onSave, onCancel }) {
+  const [f, setF] = useState({ studentId:'', type: FINE_TYPES[0], amount:'', dateImposed: todayStr(), reason:'' });
+  const set = (k,v) => setF(prev=>({...prev,[k]:v}));
+  const submit = (e) => { e.preventDefault(); if(!f.studentId || !f.amount) return; onSave(f); };
+  return (
+    <form onSubmit={submit}>
+      <div className="grid sm:grid-cols-2 gap-x-4">
+        <Field label="Student" required>
+          <select className={inputCls} value={f.studentId} onChange={e=>set('studentId',e.target.value)} required>
+            <option value="">Select student...</option>
+            {students.map(s=><option key={s.id} value={s.id}>{s.name} ({s.admissionNo})</option>)}
+          </select>
+        </Field>
+        <Field label="Fine Type"><select className={inputCls} value={f.type} onChange={e=>set('type',e.target.value)}>{FINE_TYPES.map(t=><option key={t}>{t}</option>)}</select></Field>
+        <Field label="Amount (Rs)" required><input type="number" min="0" className={inputCls} value={f.amount} onChange={e=>set('amount',e.target.value)} required/></Field>
+        <Field label="Date Imposed"><input type="date" className={inputCls} value={f.dateImposed} onChange={e=>set('dateImposed',e.target.value)} /></Field>
+        <div className="sm:col-span-2"><Field label="Reason"><textarea className={inputCls} rows="2" value={f.reason} onChange={e=>set('reason',e.target.value)} /></Field></div>
+      </div>
+      <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 mt-2">
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button type="submit">Impose Fine</Button>
+      </div>
+    </form>
+  );
+}
+
+function FinesModule({ data, imposeFine, collectFine, deleteFine, caps }) {
+  const [statusFilter, setStatusFilter] = useState('Pending');
+  const [formOpen, setFormOpen] = useState(false);
+  const [toDelete, setToDelete] = useState(null);
+
+  const filtered = data.fines.filter(f => statusFilter==='All' || f.status===statusFilter).sort((a,b)=>(b.dateImposed||'').localeCompare(a.dateImposed||''));
+  const totalPending = data.fines.filter(f=>f.status==='Pending').reduce((s,f)=>s+Number(f.amount||0),0);
+  const totalCollected = data.fines.filter(f=>f.status==='Paid').reduce((s,f)=>s+Number(f.amount||0),0);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid sm:grid-cols-2 gap-4">
+        <StatCard label="Pending Fines" value={formatPKR(totalPending)} icon="alert" tint="amber" />
+        <StatCard label="Fines Collected (all-time)" value={formatPKR(totalCollected)} icon="income" tint="emerald" />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 justify-between">
+        <select className={inputCls + " w-auto"} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>All</option><option>Pending</option><option>Paid</option></select>
+        {caps.canEdit && <Button onClick={()=>setFormOpen(true)}><Icon name="plus" className="w-4 h-4"/>Impose Fine</Button>}
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+              <tr><th className="text-left px-4 py-3">Student</th><th className="text-left px-4 py-3">Type</th><th className="text-left px-4 py-3">Date</th><th className="text-left px-4 py-3">Reason</th><th className="text-right px-4 py-3">Amount</th><th className="text-left px-4 py-3">Status</th><th className="text-right px-4 py-3">Actions</th></tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {filtered.length===0 && <tr><td colSpan="7"><EmptyState icon="alert" title="No fines found" sub="Impose late-fee, discipline, library, or custom fines here." /></td></tr>}
+              {filtered.map(f=>{
+                const student = data.students.find(s=>s.id===f.studentId);
+                return (
+                  <tr key={f.id} className="hover:bg-slate-50/60">
+                    <td className="px-4 py-3 font-medium text-slate-700">{student ? student.name : '(removed)'}</td>
+                    <td className="px-4 py-3 text-slate-600">{f.type}</td>
+                    <td className="px-4 py-3 text-slate-500">{formatDate(f.dateImposed)}</td>
+                    <td className="px-4 py-3 text-slate-500">{f.reason || '-'}</td>
+                    <td className="px-4 py-3 text-right font-medium text-rose-600">{formatPKR(f.amount)}</td>
+                    <td className="px-4 py-3"><Badge tint={f.status==='Paid'?'emerald':'amber'}>{f.status}</Badge></td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-1">
+                        {f.status==='Pending' && caps.canEdit && <Button className="text-xs py-1 px-2" onClick={()=>collectFine(f)}><Icon name="income" className="w-3.5 h-3.5"/>Collect</Button>}
+                        {caps.canDelete && <button title="Delete" onClick={()=>setToDelete(f)} className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash" className="w-4 h-4"/></button>}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {formOpen && (
+        <Modal title="Impose Fine" onClose={()=>setFormOpen(false)} wide>
+          <FineForm students={data.students.filter(s=>s.status==='Active')} onCancel={()=>setFormOpen(false)} onSave={(f)=>{ imposeFine(f); setFormOpen(false); }} />
+        </Modal>
+      )}
+      {toDelete && <ConfirmDialog text="Delete this fine record? If it was already collected, the linked income entry will also be removed." onCancel={()=>setToDelete(null)} onConfirm={()=>{ deleteFine(toDelete); setToDelete(null); }} />}
+    </div>
+  );
+}
+
+/* =========================================================================
    LOADING SCREEN
    ========================================================================= */
 function LoadingScreen() {
@@ -1604,6 +1994,82 @@ function LoadingScreen() {
 }
 
 /* =========================================================================
+   AUTH SCREENS (first-run setup + login)
+   ========================================================================= */
+function SetupScreen({ onCreateAdmin, schoolName }) {
+  const [fullName, setFullName] = useState('');
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (!username.trim() || !password) { setError('Please choose a username and password.'); return; }
+    if (password.length < 6) { setError('Password should be at least 6 characters.'); return; }
+    if (password !== confirm) { setError('Passwords do not match.'); return; }
+    setBusy(true);
+    await onCreateAdmin({ username: username.trim(), password, fullName: fullName.trim() || username.trim() });
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+      <Card className="w-full max-w-sm p-7">
+        <div className="text-center mb-6">
+          <div className="w-12 h-12 rounded-2xl bg-brand-600 mx-auto mb-3 flex items-center justify-center text-white font-display font-bold text-lg">IQ</div>
+          <h1 className="font-display font-bold text-lg text-ink">Welcome to {schoolName}</h1>
+          <p className="text-sm text-slate-400 mt-1">Create your administrator account to get started</p>
+        </div>
+        <form onSubmit={submit}>
+          <Field label="Full Name"><input className={inputCls} value={fullName} onChange={e=>setFullName(e.target.value)} placeholder="e.g. Zohaib Khan" autoFocus /></Field>
+          <Field label="Username" required><input className={inputCls} value={username} onChange={e=>setUsername(e.target.value)} required /></Field>
+          <Field label="Password" required><input type="password" className={inputCls} value={password} onChange={e=>setPassword(e.target.value)} required /></Field>
+          <Field label="Confirm Password" required><input type="password" className={inputCls} value={confirm} onChange={e=>setConfirm(e.target.value)} required /></Field>
+          {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
+          <Button type="submit" className="w-full justify-center" disabled={busy}>{busy ? 'Creating…' : 'Create Admin Account'}</Button>
+        </form>
+      </Card>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin, schoolName }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setBusy(true);
+    const ok = await onLogin(username.trim(), password);
+    setBusy(false);
+    if (!ok) setError('Incorrect username or password, or this account is disabled.');
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+      <Card className="w-full max-w-sm p-7">
+        <div className="text-center mb-6">
+          <div className="w-12 h-12 rounded-2xl bg-brand-600 mx-auto mb-3 flex items-center justify-center text-white"><Icon name="lock" className="w-5 h-5"/></div>
+          <h1 className="font-display font-bold text-lg text-ink">{schoolName}</h1>
+          <p className="text-sm text-slate-400 mt-1">Sign in to continue</p>
+        </div>
+        <form onSubmit={submit}>
+          <Field label="Username" required><input className={inputCls} value={username} onChange={e=>setUsername(e.target.value)} autoFocus required /></Field>
+          <Field label="Password" required><input type="password" className={inputCls} value={password} onChange={e=>setPassword(e.target.value)} required /></Field>
+          {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
+          <Button type="submit" className="w-full justify-center" disabled={busy}>{busy ? 'Signing in…' : 'Sign In'}</Button>
+        </form>
+      </Card>
+    </div>
+  );
+}
+
+/* =========================================================================
    APP ROOT
    ========================================================================= */
 function App() {
@@ -1611,6 +2077,8 @@ function App() {
   const [tab, setTab] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
   const [incomePrefill, setIncomePrefill] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authError, setAuthError] = useState('');
 
   const addStudent = (f) => setData(prev => ({ ...prev, students: [{ ...f, id: uid() }, ...prev.students] }));
   const updateStudent = (id, f) => setData(prev => ({ ...prev, students: prev.students.map(s => s.id===id ? { ...s, ...f, id } : s) }));
@@ -1657,11 +2125,87 @@ function App() {
   const updateVehicle = (id, f) => setData(prev => ({ ...prev, vehicles: prev.vehicles.map(v => v.id===id ? { ...v, ...f, id } : v) }));
   const deleteVehicle = (id) => setData(prev => ({ ...prev, vehicles: prev.vehicles.filter(v=>v.id!==id) }));
 
+  const issueDocument = (f) => setData(prev => {
+    const docNo = `${prev.settings.docPrefix}-${prev.settings.nextDocNo}`;
+    let next = { ...prev, documents: [{ ...f, id: uid(), docNo }, ...prev.documents], settings: { ...prev.settings, nextDocNo: prev.settings.nextDocNo + 1 } };
+    if (Number(f.feeCharged) > 0) {
+      const receiptNo = `${next.settings.receiptPrefix}-${next.settings.nextReceiptNo}`;
+      const category = DOCUMENT_FEE_CATEGORY[f.type] || 'Documents Fee';
+      const incomeEntry = { id: uid(), receiptNo, date: f.issueDate, studentId: f.studentId, category, amount: f.feeCharged, paymentMethod: 'Cash', receivedBy: currentUser ? (currentUser.fullName || currentUser.username) : '', remarks: `${f.type} issued` };
+      next = { ...next, income: [incomeEntry, ...next.income], settings: { ...next.settings, nextReceiptNo: next.settings.nextReceiptNo + 1 } };
+    }
+    return next;
+  });
+  const deleteDocument = (id) => setData(prev => ({ ...prev, documents: prev.documents.filter(d=>d.id!==id) }));
+
+  const imposeFine = (f) => setData(prev => ({ ...prev, fines: [{ ...f, id: uid(), status: 'Pending' }, ...prev.fines] }));
+  const collectFine = (fine) => setData(prev => {
+    const receiptNo = `${prev.settings.receiptPrefix}-${prev.settings.nextReceiptNo}`;
+    const incomeEntry = { id: uid(), receiptNo, date: todayStr(), studentId: fine.studentId, category: 'Fine Collection', amount: fine.amount, paymentMethod: 'Cash', receivedBy: currentUser ? (currentUser.fullName || currentUser.username) : '', remarks: `${fine.type}${fine.reason ? ' — '+fine.reason : ''}` };
+    return {
+      ...prev,
+      income: [incomeEntry, ...prev.income],
+      fines: prev.fines.map(x => x.id===fine.id ? { ...x, status:'Paid', datePaid: todayStr(), incomeId: incomeEntry.id } : x),
+      settings: { ...prev.settings, nextReceiptNo: prev.settings.nextReceiptNo + 1 },
+    };
+  });
+  const deleteFine = (fine) => setData(prev => ({
+    ...prev,
+    fines: prev.fines.filter(x=>x.id!==fine.id),
+    income: fine.incomeId ? prev.income.filter(i=>i.id!==fine.incomeId) : prev.income,
+  }));
+
   const updateSettings = (patch) => setData(prev => ({ ...prev, settings: { ...prev.settings, ...patch } }));
   const importData = (obj) => setData({ ...freshData(), ...obj, settings: { ...DEFAULT_DATA.settings, ...(obj.settings||{}) } });
-  const resetData = () => setData(freshData());
+  const resetData = () => { setData(freshData()); setCurrentUser(null); };
 
   const openIncomeFormFor = (student) => { setTab('income'); setIncomePrefill(student); };
+
+  /* ---- Auth: first-run setup, login, logout, user management ---- */
+  const createFirstAdmin = async ({ username, password, fullName }) => {
+    const salt = randomSalt();
+    const passwordHash = await hashPassword(password, salt);
+    const user = { id: uid(), username, passwordHash, salt, fullName, role: 'Admin', status: 'Active' };
+    setData(prev => ({ ...prev, users: [user] }));
+    setCurrentUser(user);
+  };
+
+  const login = async (username, password) => {
+    const user = data.users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.status === 'Active');
+    if (!user) return false;
+    const hash = await hashPassword(password, user.salt);
+    if (hash !== user.passwordHash) return false;
+    setCurrentUser(user);
+    return true;
+  };
+
+  const logout = () => { setCurrentUser(null); setTab('dashboard'); };
+
+  const addUser = async (f) => {
+    const salt = randomSalt();
+    const passwordHash = await hashPassword(f.password, salt);
+    const user = { id: uid(), username: f.username.trim(), passwordHash, salt, fullName: f.fullName.trim(), role: f.role, status: f.status };
+    setData(prev => ({ ...prev, users: [...prev.users, user] }));
+  };
+  const updateUser = async (existing, f) => {
+    let patch = { fullName: f.fullName.trim(), role: f.role, status: f.status };
+    if (f.password) {
+      const salt = randomSalt();
+      const passwordHash = await hashPassword(f.password, salt);
+      patch = { ...patch, salt, passwordHash };
+    }
+    setData(prev => ({ ...prev, users: prev.users.map(u => u.id===existing.id ? { ...u, ...patch } : u) }));
+    if (currentUser && currentUser.id === existing.id) setCurrentUser(prev => ({ ...prev, ...patch }));
+  };
+  const deleteUser = (user) => setData(prev => ({ ...prev, users: prev.users.filter(u=>u.id!==user.id) }));
+
+  const caps = currentUser ? getCapabilities(currentUser.role) : getCapabilities('Read-only User');
+
+  /* ---- Dark mode: reflect settings.darkMode onto the document root ---- */
+  useEffect(() => {
+    if (!data) return;
+    document.documentElement.classList.toggle('dark', !!data.settings.darkMode);
+  }, [data && data.settings.darkMode]);
 
   const titles = {
     dashboard: ['Dashboard', 'Overview of your school finances'],
@@ -1670,26 +2214,32 @@ function App() {
     expenses: ['Expenses', 'Salaries, bills, and all expenditures'],
     salary: ['Salary', 'Employees, payroll, and salary slips'],
     transport: ['Transport', 'Vehicles, drivers, and running costs'],
+    documents: ['Documents', 'Certificates, result cards, and issued paperwork'],
+    fines: ['Fines', 'Late fee, discipline, library, and custom fines'],
     reports: ['Reports', 'Generate financial reports and statements'],
-    settings: ['Settings', 'School info, categories, and backup'],
+    settings: ['Settings', 'School info, categories, users, and backup'],
   };
 
   if (!loaded || !data) return <LoadingScreen />;
+  if (data.users.length === 0) return <SetupScreen schoolName={data.settings.schoolName} onCreateAdmin={createFirstAdmin} />;
+  if (!currentUser) return <LoginScreen schoolName={data.settings.schoolName} onLogin={login} />;
 
   return (
     <div className="min-h-screen flex">
-      <Sidebar tab={tab} setTab={setTab} settings={data.settings} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
+      <Sidebar tab={tab} setTab={setTab} settings={data.settings} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} caps={caps} currentUser={currentUser} onLogout={logout} />
       <div className="flex-1 min-w-0 flex flex-col">
-        <Topbar setMobileOpen={setMobileOpen} title={titles[tab][0]} subtitle={titles[tab][1]} />
+        <Topbar setMobileOpen={setMobileOpen} title={titles[tab][0]} subtitle={titles[tab][1]} darkMode={!!data.settings.darkMode} onToggleDark={()=>updateSettings({ darkMode: !data.settings.darkMode })} />
         <main className="flex-1 p-4 sm:p-6 max-w-[1400px] w-full mx-auto">
           {tab==='dashboard' && <Dashboard data={data} setTab={setTab} />}
-          {tab==='students' && <StudentsModule data={data} addStudent={addStudent} updateStudent={updateStudent} deleteStudent={deleteStudent} openIncomeFormFor={openIncomeFormFor} />}
-          {tab==='income' && <IncomeModule data={data} addIncome={addIncome} updateIncome={updateIncome} deleteIncome={deleteIncome} prefillFor={incomePrefill} clearPrefill={()=>setIncomePrefill(null)} />}
-          {tab==='expenses' && <ExpensesModule data={data} addExpense={addExpense} updateExpense={updateExpense} deleteExpense={deleteExpense} />}
-          {tab==='salary' && <SalaryModule data={data} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} paySalary={paySalary} deleteSalaryPayment={deleteSalaryPayment} />}
-          {tab==='transport' && <TransportModule data={data} addVehicle={addVehicle} updateVehicle={updateVehicle} deleteVehicle={deleteVehicle} />}
+          {tab==='students' && <StudentsModule data={data} addStudent={addStudent} updateStudent={updateStudent} deleteStudent={deleteStudent} openIncomeFormFor={openIncomeFormFor} caps={caps} />}
+          {tab==='income' && <IncomeModule data={data} addIncome={addIncome} updateIncome={updateIncome} deleteIncome={deleteIncome} prefillFor={incomePrefill} clearPrefill={()=>setIncomePrefill(null)} caps={caps} />}
+          {tab==='expenses' && <ExpensesModule data={data} addExpense={addExpense} updateExpense={updateExpense} deleteExpense={deleteExpense} caps={caps} />}
+          {tab==='salary' && <SalaryModule data={data} addEmployee={addEmployee} updateEmployee={updateEmployee} deleteEmployee={deleteEmployee} paySalary={paySalary} deleteSalaryPayment={deleteSalaryPayment} caps={caps} />}
+          {tab==='transport' && <TransportModule data={data} addVehicle={addVehicle} updateVehicle={updateVehicle} deleteVehicle={deleteVehicle} caps={caps} />}
+          {tab==='documents' && <DocumentsModule data={data} issueDocument={issueDocument} deleteDocument={deleteDocument} caps={caps} />}
+          {tab==='fines' && <FinesModule data={data} imposeFine={imposeFine} collectFine={collectFine} deleteFine={deleteFine} caps={caps} />}
           {tab==='reports' && <ReportsModule data={data} />}
-          {tab==='settings' && <SettingsModule data={data} updateSettings={updateSettings} importData={importData} resetData={resetData} />}
+          {tab==='settings' && caps.canAccessSettings && <SettingsModule data={data} updateSettings={updateSettings} importData={importData} resetData={resetData} caps={caps} currentUser={currentUser} onAddUser={addUser} onUpdateUser={updateUser} onDeleteUser={deleteUser} />}
         </main>
       </div>
     </div>

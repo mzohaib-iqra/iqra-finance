@@ -19,3 +19,59 @@ body { font-family: 'Inter', ui-sans-serif, system-ui; background: #f6f7fb; }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .animate-fade { animation: fadeIn .15s ease-out; }
+
+/* =========================================================================
+   DARK MODE — overrides Tailwind's generated neutral utility classes
+   whenever an ancestor has the `.dark` class. Semantic accent colors
+   (income/expense/warning) get muted, lightened counterparts for contrast.
+   ========================================================================= */
+.dark body { background: #100e1f; color: #ece9fa; }
+
+.dark .bg-white { background-color: #1c1a30 !important; }
+.dark .bg-white\/5 { background-color: rgba(255,255,255,0.05) !important; }
+.dark .bg-white\/80 { background-color: rgba(28,26,48,0.85) !important; }
+.dark .bg-slate-50 { background-color: #171527 !important; }
+.dark .bg-slate-50\/50 { background-color: rgba(23,21,39,0.6) !important; }
+.dark .bg-slate-50\/60 { background-color: rgba(38,35,61,0.6) !important; }
+.dark .bg-slate-100 { background-color: #26233d !important; }
+.dark .bg-slate-900\/50 { background-color: rgba(0,0,0,0.6) !important; }
+
+.dark .text-ink { color: #f2f1fb !important; }
+.dark .text-slate-800 { color: #ece9fa !important; }
+.dark .text-slate-700 { color: #dcdaee !important; }
+.dark .text-slate-600 { color: #c3c1dc !important; }
+.dark .text-slate-500 { color: #a09dc0 !important; }
+.dark .text-slate-400 { color: #7d7aa0 !important; }
+
+.dark .border-slate-50 { border-color: #211f38 !important; }
+.dark .border-slate-100 { border-color: #2c2947 !important; }
+.dark .border-slate-200 { border-color: #353152 !important; }
+.dark .border-slate-300 { border-color: #423d63 !important; }
+.dark .divide-slate-50 > :not([hidden]) ~ :not([hidden]) { border-color: #2c2947 !important; }
+
+.dark .bg-emerald-50 { background-color: rgba(16,185,129,0.14) !important; }
+.dark .bg-emerald-50\/50 { background-color: rgba(16,185,129,0.09) !important; }
+.dark .text-emerald-600 { color: #34d399 !important; }
+.dark .text-emerald-700 { color: #6ee7b7 !important; }
+.dark .border-emerald-100 { border-color: rgba(16,185,129,0.25) !important; }
+
+.dark .bg-rose-50 { background-color: rgba(244,63,94,0.14) !important; }
+.dark .bg-rose-50\/50 { background-color: rgba(244,63,94,0.09) !important; }
+.dark .text-rose-500 { color: #fb7185 !important; }
+.dark .text-rose-600 { color: #fb7185 !important; }
+.dark .text-rose-700 { color: #fda4af !important; }
+.dark .border-rose-100 { border-color: rgba(244,63,94,0.25) !important; }
+
+.dark .bg-amber-50 { background-color: rgba(217,119,6,0.16) !important; }
+.dark .bg-amber-50\/50 { background-color: rgba(217,119,6,0.1) !important; }
+.dark .text-amber-700 { color: #fbbf24 !important; }
+.dark .border-amber-100 { border-color: rgba(217,119,6,0.28) !important; }
+
+.dark .bg-brand-50 { background-color: rgba(101,95,240,0.18) !important; }
+.dark .bg-brand-50\/50 { background-color: rgba(101,95,240,0.11) !important; }
+.dark .text-brand-600 { color: #a5a2ff !important; }
+.dark .text-brand-700 { color: #b8b5ff !important; }
+.dark .border-brand-100 { border-color: rgba(101,95,240,0.3) !important; }
+
+.dark ::-webkit-scrollbar-thumb { background: #322e4d; }
+.dark select, .dark input, .dark textarea { color-scheme: dark; }
